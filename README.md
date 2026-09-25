@@ -30,54 +30,41 @@ Let anyone go from idea → production-grade full-stack website or web app with 
 | Generated apps | Next.js + Tailwind + shadcn + Supabase |
 | Monorepo | Turborepo + pnpm |
 
-## Monorepo Structure
-
-```
-vireo/
-├── apps/
-│   └── web/              # The builder UI (Next.js)
-├── packages/
-│   ├── db/               # Drizzle schema + client
-│   ├── ai/               # Agent orchestration, prompts, tools
-│   ├── ui/               # Shared components
-│   └── config/           # Shared configs
-├── turbo.json
-├── pnpm-workspace.yaml
-└── package.json
-```
-
 ## Getting Started
 
 ```bash
 cd apps/web
 npm install
 cp .env.example .env.local
-# Fill DATABASE_URL, CLERK_*, OPENAI_API_KEY / ANTHROPIC_API_KEY etc.
-
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) for the marketing page.  
-Open [http://localhost:3000/app](http://localhost:3000/app) for the builder.
+- Marketing: http://localhost:3000  
+- Builder: http://localhost:3000/app
 
-## Current Status (Phase 0)
+## Current Status
 
 - [x] Monorepo scaffold
 - [x] Marketing landing page
-- [x] Builder UI shell (chat + plan mode + preview pane)
-- [x] Database schema (projects, messages, plans, files)
+- [x] Builder UI (chat + plan + preview)
+- [x] Database schema (users, projects, messages, files, plans)
 - [x] Planner agent types + stub
-- [ ] Auth
-- [ ] Real Planner agent (LLM call)
-- [ ] Design direction generation
-- [ ] Sandbox preview
+- [x] **Planner wired into builder** — structured plan appears after you describe an idea
+- [x] **3 design directions** with color swatches — user selects one
+- [x] **Approve Plan gate** — no code written until approval
+- [x] **Live mini-preview** of the selected design direction
+- [ ] Auth + project persistence
+- [ ] Real LLM (replace stub)
+- [ ] Full sandboxed Next.js preview after approval
+- [ ] Coder agent that writes real files
 
-## Next Steps
+## How the flow works today
 
-1. Wire real LLM into Planner
-2. Generate 3 live HTML design previews
-3. Gate coding behind explicit plan approval
-4. Add auth + project persistence
+1. Describe your idea in **Chat**
+2. Planner generates brief, goals, pages, features, stack, and 3 design directions
+3. Switch to **Plan** tab → review everything → pick a design
+4. Click **Approve Plan & Start Building**
+5. (Next milestone) Coder agent generates the real codebase + live sandbox
 
 ## License
 
