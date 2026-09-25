@@ -17,43 +17,42 @@ OPENROUTER_MODEL=qwen/qwen3.8-27b:free
 NEXT_PUBLIC_APP_URL=http://localhost:3000
 ```
 
-Never commit `.env.local` (it is gitignored).
+Never commit `.env.local`.
 
 ### Vercel (production)
 
-1. Open [vercel.com](https://vercel.com) → import the GitHub repo `Tajudeen001-security/vireo`
-2. **Root Directory:** set to `apps/web`
-3. **Environment Variables** (Project → Settings → Environment Variables):
+1. Import repo `Tajudeen001-security/vireo`
+2. **Root Directory:** `apps/web`
+3. Environment Variables:
 
 | Name | Value |
 |------|--------|
 | `OPENROUTER_API_KEY` | your OpenRouter key |
 | `OPENROUTER_MODEL` | `qwen/qwen3.8-27b:free` |
-| `NEXT_PUBLIC_APP_URL` | `https://your-app.vercel.app` (after first deploy, update) |
-
-Optional: also add `GEMINI_API_KEY` and/or `GROQ_API_KEY` for multi-agent fallback.
+| `NEXT_PUBLIC_APP_URL` | your Vercel URL after first deploy |
 
 4. Deploy
 
-## 2. One-click from GitHub
+## Vercel settings (important)
 
-After the repo is public (or Vercel has access):
+If **Root Directory** is set to `apps/web` (recommended):
 
-Import at: https://vercel.com/new/clone?repository-url=https://github.com/Tajudeen001-security/vireo&root-directory=apps/web
+- **Install Command:** leave empty/default or `npm install`
+- **Build Command:** leave empty/default or `npm run build`
+- **Do not** use `cd apps/web && ...` — you are already inside `apps/web`
 
-Or: Vercel Dashboard → Add New → Project → Import `vireo` → Root Directory = `apps/web`.
+The error `cd: apps/web: No such file or directory` means Root Directory is already `apps/web` and the install command still tries to `cd apps/web` again.
 
-## 3. What users of Vireo get
+### Override in Vercel UI if needed
 
-- **Download ZIP** — download the generated Next.js app and run it locally
-- **Publish (button)** — opens Vercel clone flow (full automated user-project deploy comes next)
+Project → Settings → General → Build & Development Settings:
 
-## 4. Free OpenRouter models (examples)
+| Setting | Value |
+|---------|--------|
+| Framework Preset | Next.js |
+| Root Directory | `apps/web` |
+| Install Command | `npm install` |
+| Build Command | `npm run build` |
+| Output Directory | (leave default / empty for Next.js) |
 
-```
-qwen/qwen3.8-27b:free
-google/gemma-3-27b-it:free
-meta-llama/llama-3.3-70b-instruct:free
-```
-
-Rate limits apply (~20 RPM / ~50 RPD on free tier). Enough for planning and coding demos.
+Then Redeploy.
