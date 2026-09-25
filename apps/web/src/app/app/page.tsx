@@ -3,16 +3,19 @@
 import { useState } from "react";
 import Link from "next/link";
 import {
-  generatePlanStub,
+  generatePlan,
   type ProjectPlan,
   type DesignDirection,
 } from "@/lib/planner";
+import { runBuild, type GeneratedFile } from "@/lib/coder";
 
 type Message = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
 };
+
+type Mode = "chat" | "plan" | "files";
 
 export default function BuilderPage() {
   const [messages, setMessages] = useState<Message[]>([
@@ -24,28 +27,23 @@ export default function BuilderPage() {
     },
   ]);
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"chat" | "plan">("chat");
+  const [mode, setMode] = useState<Mode>("chat");
   const [plan, setPlan] = useState<ProjectPlan | null>(null);
   const [selectedDirection, setSelectedDirection] =
     useState<DesignDirection | null>(null);
   const [isPlanning, setIsPlanning] = useState(false);
   const [planApproved, setPlanApproved] = useState(false);
   const [isBuilding, setIsBuilding] = useState(false);
+  const [files, setFiles] = useState<GeneratedFile[]>([]);
+  const [activeFile, setActiveFile] = useState<string | null>(null);
+  const [buildProvider, setBuildProvider] = useState<string | null>(null);
 
   const send = async () => {
     if (!input.trim() || isPlanning) return;
     const prompt = input.trim();
-    const userMsg: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content: prompt,
-    };
-    setMessages((m) => [...m, userMsg]);
-    setInput("");
-    setIsPlanning(true);
-
     setMessages((m) => [
       ...m,
+      { id: Date.now().toString(), role: "user", content: prompt },
       {
         id: (Date.now() + 1).toString(),
         role: "assistant",
@@ -53,19 +51,27 @@ export default function BuilderPage() {
           "Got it. I'm analyzing your request and preparing a structured plan + three design directions…",
       },
     ]);
+    setInput("");
+    setIsPlanning(true);
 
     try {
-      const generated = await generatePlanStub(prompt);
+      const { plan: generated, provider, model, warning } =
+        await generatePlan(prompt);
       setPlan(generated);
       setSelectedDirection(generated.designDirections[0] ?? null);
       setMode("plan");
+      const providerNote =
+        provider === "stub"
+          ? " (offline stub — add GEMINI_API_KEY and/or GROQ_API_KEY for real AI)"
+          : ` via ${provider}${model ? ` · ${model}` : ""}`;
       setMessages((m) => [
         ...m,
         {
           id: (Date.now() + 2).toString(),
           role: "assistant",
           content:
-            "Plan is ready. Review the brief, pages, features, stack, and the three design directions on the Plan tab. Choose a direction, then approve to start building.",
+            `Plan is ready${providerNote}. Review the plan, pick a design direction, then approve to start building.` +
+            (warning ? ` Note: ${warning}` : ""),
         },
       ]);
     } catch {
@@ -82,8 +88,8 @@ export default function BuilderPage() {
     }
   };
 
-  const approvePlan = () => {
-    if (!plan || !selectedDirection) return;
+  const approvePlan = async () => {
+    if (!plan || !selectedDirection || isBuilding) return;
     setPlanApproved(true);
     setIsBuilding(true);
     setMessages((m) => [
@@ -91,11 +97,44 @@ export default function BuilderPage() {
       {
         id: Date.now().toString(),
         role: "assistant",
-        content: `Plan approved with design “${selectedDirection.name}”. Starting the build… (Coder agent will write real files next.)`,
+        content: `Plan approved with design “${selectedDirection.name}”. Coder agent is writing your Next.js files…`,
       },
     ]);
-    setTimeout(() => setIsBuilding(false), 2000);
+
+    try {
+      const result = await runBuild(plan, selectedDirection);
+      setFiles(result.files);
+      setActiveFile(result.files[0]?.path ?? null);
+      setBuildProvider(result.provider);
+      setMode("files");
+      const note =
+        result.provider === "stub"
+          ? " (deterministic scaffold — works offline)"
+          : ` via ${result.provider}${result.model ? ` · ${result.model}` : ""}`;
+      setMessages((m) => [
+        ...m,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: `Build complete${note}. ${result.files.length} files generated. Open the Files tab to browse the code.`,
+        },
+      ]);
+    } catch {
+      setMessages((m) => [
+        ...m,
+        {
+          id: (Date.now() + 1).toString(),
+          role: "assistant",
+          content: "Build failed. Please try approving the plan again.",
+        },
+      ]);
+    } finally {
+      setIsBuilding(false);
+    }
   };
+
+  const activeContent =
+    files.find((f) => f.path === activeFile)?.content ?? "";
 
   return (
     <div className="h-screen flex flex-col bg-zinc-950 text-zinc-100">
@@ -109,35 +148,38 @@ export default function BuilderPage() {
           </Link>
           <span className="text-zinc-600">/</span>
           <span className="text-sm text-zinc-400">New project</span>
-          {planApproved && (
+          {isBuilding && (
+            <span className="text-[10px] uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">
+              Building…
+            </span>
+          )}
+          {planApproved && !isBuilding && files.length > 0 && (
             <span className="text-[10px] uppercase tracking-wider text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full">
-              Building
+              Built
             </span>
           )}
         </div>
         <div className="flex items-center gap-2">
+          {(["chat", "plan", "files"] as Mode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              disabled={m === "files" && files.length === 0}
+              className={`text-xs px-3 py-1 rounded-full capitalize disabled:opacity-30 ${
+                mode === m
+                  ? m === "plan" || m === "files"
+                    ? "bg-emerald-500/20 text-emerald-400"
+                    : "bg-zinc-800 text-zinc-100"
+                  : "text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {m}
+              {m === "plan" && plan ? " ✓" : ""}
+              {m === "files" && files.length > 0 ? ` (${files.length})` : ""}
+            </button>
+          ))}
           <button
-            onClick={() => setMode("chat")}
-            className={`text-xs px-3 py-1 rounded-full ${
-              mode === "chat"
-                ? "bg-zinc-800 text-zinc-100"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Chat
-          </button>
-          <button
-            onClick={() => setMode("plan")}
-            className={`text-xs px-3 py-1 rounded-full ${
-              mode === "plan"
-                ? "bg-emerald-500/20 text-emerald-400"
-                : "text-zinc-500 hover:text-zinc-300"
-            }`}
-          >
-            Plan {plan ? "✓" : ""}
-          </button>
-          <button
-            disabled={!planApproved}
+            disabled={files.length === 0}
             className="ml-2 text-xs px-3 py-1.5 rounded-full bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
           >
             Publish
@@ -147,7 +189,7 @@ export default function BuilderPage() {
 
       <div className="flex-1 flex overflow-hidden">
         <div className="w-full max-w-md border-r border-zinc-800 flex flex-col">
-          {mode === "chat" ? (
+          {mode === "chat" && (
             <>
               <div className="flex-1 overflow-y-auto p-4 space-y-4">
                 {messages.map((m) => (
@@ -168,11 +210,11 @@ export default function BuilderPage() {
                     </div>
                   </div>
                 ))}
-                {isPlanning && (
+                {(isPlanning || isBuilding) && (
                   <div className="flex justify-start">
                     <div className="bg-zinc-900 border border-zinc-800 rounded-2xl px-4 py-2.5 text-sm text-zinc-400 flex items-center gap-2">
                       <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-                      Planning…
+                      {isBuilding ? "Coding…" : "Planning…"}
                     </div>
                   </div>
                 )}
@@ -184,12 +226,12 @@ export default function BuilderPage() {
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => e.key === "Enter" && send()}
                     placeholder="Describe your site or app..."
-                    disabled={isPlanning}
+                    disabled={isPlanning || isBuilding}
                     className="flex-1 bg-zinc-900 border border-zinc-700 rounded-xl px-4 py-2.5 text-sm outline-none focus:border-emerald-500/50 placeholder:text-zinc-600 disabled:opacity-50"
                   />
                   <button
                     onClick={send}
-                    disabled={isPlanning || !input.trim()}
+                    disabled={isPlanning || isBuilding || !input.trim()}
                     className="rounded-xl bg-emerald-500 px-4 text-sm font-medium text-zinc-950 hover:bg-emerald-400 transition disabled:opacity-40"
                   >
                     Send
@@ -200,14 +242,13 @@ export default function BuilderPage() {
                 </p>
               </div>
             </>
-          ) : (
+          )}
+
+          {mode === "plan" && (
             <div className="flex-1 overflow-y-auto p-4">
               {!plan ? (
                 <div className="text-center text-zinc-500 text-sm py-12">
                   <p>No plan yet.</p>
-                  <p className="mt-1 text-xs">
-                    Describe your idea in Chat and I’ll generate one.
-                  </p>
                   <button
                     onClick={() => setMode("chat")}
                     className="mt-4 text-xs text-emerald-400 hover:underline"
@@ -224,9 +265,7 @@ export default function BuilderPage() {
                     <h3 className="font-medium mb-1.5 text-xs uppercase tracking-wider text-zinc-500">
                       Product Brief
                     </h3>
-                    <p className="text-zinc-200 text-sm leading-relaxed">
-                      {plan.brief}
-                    </p>
+                    <p className="text-zinc-200 leading-relaxed">{plan.brief}</p>
                   </div>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
                     <h3 className="font-medium mb-2 text-xs uppercase tracking-wider text-zinc-500">
@@ -234,11 +273,8 @@ export default function BuilderPage() {
                     </h3>
                     <ul className="space-y-1.5">
                       {plan.goals.map((g) => (
-                        <li
-                          key={g}
-                          className="flex gap-2 text-zinc-300 text-xs leading-relaxed"
-                        >
-                          <span className="text-emerald-500 mt-0.5">•</span>
+                        <li key={g} className="flex gap-2 text-zinc-300 text-xs">
+                          <span className="text-emerald-500">•</span>
                           {g}
                         </li>
                       ))}
@@ -251,9 +287,7 @@ export default function BuilderPage() {
                     <div className="space-y-2">
                       {plan.pages.map((p) => (
                         <div key={p.path} className="text-xs">
-                          <span className="font-medium text-zinc-200">
-                            {p.name}
-                          </span>
+                          <span className="font-medium text-zinc-200">{p.name}</span>
                           <span className="text-zinc-600 ml-1.5">{p.path}</span>
                           <p className="text-zinc-500 mt-0.5">{p.description}</p>
                         </div>
@@ -268,7 +302,7 @@ export default function BuilderPage() {
                       {plan.features.map((f) => (
                         <div key={f.name} className="flex items-start gap-2 text-xs">
                           <span
-                            className={`shrink-0 mt-0.5 text-[10px] uppercase px-1.5 py-0.5 rounded ${
+                            className={`shrink-0 text-[10px] uppercase px-1.5 py-0.5 rounded ${
                               f.priority === "mvp"
                                 ? "bg-emerald-500/20 text-emerald-400"
                                 : "bg-zinc-800 text-zinc-500"
@@ -277,9 +311,7 @@ export default function BuilderPage() {
                             {f.priority}
                           </span>
                           <div>
-                            <span className="font-medium text-zinc-200">
-                              {f.name}
-                            </span>
+                            <span className="font-medium text-zinc-200">{f.name}</span>
                             <p className="text-zinc-500">{f.description}</p>
                           </div>
                         </div>
@@ -290,7 +322,7 @@ export default function BuilderPage() {
                     <h3 className="font-medium mb-2 text-xs uppercase tracking-wider text-zinc-500">
                       Stack
                     </h3>
-                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                    <div className="grid grid-cols-2 gap-2 text-xs">
                       <div>
                         <span className="text-zinc-500">Frontend</span>
                         <p className="text-zinc-300">{plan.stack.frontend}</p>
@@ -307,10 +339,6 @@ export default function BuilderPage() {
                         <span className="text-zinc-500">Auth</span>
                         <p className="text-zinc-300">{plan.stack.auth}</p>
                       </div>
-                      <div className="col-span-2">
-                        <span className="text-zinc-500">Hosting</span>
-                        <p className="text-zinc-300">{plan.stack.hosting}</p>
-                      </div>
                     </div>
                   </div>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
@@ -322,42 +350,31 @@ export default function BuilderPage() {
                         <button
                           key={d.id}
                           onClick={() => setSelectedDirection(d)}
-                          className={`w-full text-left rounded-lg border p-3 transition ${
+                          disabled={planApproved}
+                          className={`w-full text-left rounded-lg border p-3 transition disabled:opacity-70 ${
                             selectedDirection?.id === d.id
                               ? "border-emerald-500/50 bg-emerald-500/10"
                               : "border-zinc-700 hover:border-zinc-600"
                           }`}
                         >
                           <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-medium text-sm text-zinc-100">
-                              {d.name}
-                            </span>
+                            <span className="font-medium text-sm">{d.name}</span>
                             {selectedDirection?.id === d.id && (
-                              <span className="text-[10px] text-emerald-400">
-                                Selected
-                              </span>
+                              <span className="text-[10px] text-emerald-400">Selected</span>
                             )}
                           </div>
-                          <p className="text-[11px] text-zinc-500 mb-2">
-                            {d.mood}
-                          </p>
+                          <p className="text-[11px] text-zinc-500 mb-2">{d.mood}</p>
                           <div className="flex gap-1.5">
-                            {[
-                              d.colors.primary,
-                              d.colors.accent,
-                              d.colors.secondary,
-                              d.colors.background,
-                            ].map((c) => (
-                              <div
-                                key={c}
-                                className="h-4 w-4 rounded-full border border-white/10"
-                                style={{ backgroundColor: c }}
-                              />
-                            ))}
+                            {[d.colors.primary, d.colors.accent, d.colors.secondary, d.colors.background].map(
+                              (c) => (
+                                <div
+                                  key={c}
+                                  className="h-4 w-4 rounded-full border border-white/10"
+                                  style={{ backgroundColor: c }}
+                                />
+                              )
+                            )}
                           </div>
-                          <p className="text-[10px] text-zinc-600 mt-1.5">
-                            {d.typography.heading} / {d.typography.body}
-                          </p>
                         </button>
                       ))}
                     </div>
@@ -365,20 +382,20 @@ export default function BuilderPage() {
                   {!planApproved ? (
                     <button
                       onClick={approvePlan}
-                      disabled={!selectedDirection}
-                      className="w-full rounded-xl bg-emerald-500 text-zinc-950 py-3 text-sm font-semibold hover:bg-emerald-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
+                      disabled={!selectedDirection || isBuilding}
+                      className="w-full rounded-xl bg-emerald-500 text-zinc-950 py-3 text-sm font-semibold hover:bg-emerald-400 transition disabled:opacity-40"
                     >
-                      Approve Plan & Start Building
+                      {isBuilding ? "Building…" : "Approve Plan & Start Building"}
                     </button>
                   ) : (
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
-                      <p className="text-emerald-400 text-sm font-medium">
-                        Plan approved
-                      </p>
+                      <p className="text-emerald-400 text-sm font-medium">Plan approved</p>
                       <p className="text-xs text-zinc-400 mt-1">
                         {isBuilding
                           ? "Coder agent is writing files…"
-                          : `Building with “${selectedDirection?.name}”`}
+                          : files.length
+                            ? `${files.length} files ready · ${buildProvider || "stub"}`
+                            : `Building with “${selectedDirection?.name}”`}
                       </p>
                     </div>
                   )}
@@ -386,104 +403,132 @@ export default function BuilderPage() {
               )}
             </div>
           )}
+
+          {mode === "files" && (
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="p-3 border-b border-zinc-800">
+                <p className="text-xs text-zinc-500">
+                  Generated files{buildProvider ? ` · ${buildProvider}` : ""}
+                </p>
+              </div>
+              <div className="flex-1 overflow-y-auto">
+                {files.length === 0 ? (
+                  <p className="text-sm text-zinc-500 p-4 text-center py-12">
+                    Approve a plan to generate files.
+                  </p>
+                ) : (
+                  <ul className="py-1">
+                    {files.map((f) => (
+                      <li key={f.path}>
+                        <button
+                          onClick={() => setActiveFile(f.path)}
+                          className={`w-full text-left px-4 py-2 text-xs font-mono truncate ${
+                            activeFile === f.path
+                              ? "bg-emerald-500/10 text-emerald-300"
+                              : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
+                          }`}
+                        >
+                          {f.path}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="flex-1 flex flex-col bg-zinc-900/30">
+        <div className="flex-1 flex flex-col bg-zinc-900/30 min-w-0">
           <div className="h-10 border-b border-zinc-800 flex items-center px-4 gap-2 text-xs text-zinc-500">
             <span
               className={`h-2 w-2 rounded-full ${
                 selectedDirection ? "bg-emerald-400" : "bg-zinc-600"
               }`}
             />
-            Preview
-            {selectedDirection && (
-              <span className="text-zinc-400">
-                · {selectedDirection.name}
-              </span>
+            {mode === "files" && activeFile ? (
+              <span className="font-mono text-zinc-400 truncate">{activeFile}</span>
+            ) : (
+              <>
+                Preview
+                {selectedDirection && (
+                  <span className="text-zinc-400"> · {selectedDirection.name}</span>
+                )}
+              </>
             )}
-            <span className="ml-auto">Desktop · Mobile toggle coming</span>
           </div>
-          <div className="flex-1 flex items-center justify-center p-8 overflow-auto">
-            {selectedDirection ? (
-              <div
-                className="w-full max-w-lg rounded-2xl border border-zinc-700 overflow-hidden shadow-2xl"
-                style={{
-                  backgroundColor: selectedDirection.colors.background,
-                  color: selectedDirection.colors.foreground,
-                }}
-              >
+          <div className="flex-1 overflow-auto">
+            {mode === "files" && activeFile ? (
+              <pre className="p-4 text-[11px] leading-relaxed font-mono text-zinc-300 whitespace-pre-wrap">
+                {activeContent}
+              </pre>
+            ) : selectedDirection ? (
+              <div className="p-8 flex items-center justify-center min-h-full">
                 <div
-                  className="px-6 py-4 border-b"
+                  className="w-full max-w-lg rounded-2xl border border-zinc-700 overflow-hidden shadow-2xl"
                   style={{
-                    borderColor: selectedDirection.colors.secondary + "40",
+                    backgroundColor: selectedDirection.colors.background,
+                    color: selectedDirection.colors.foreground,
                   }}
                 >
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="h-5 w-5 rounded"
-                      style={{
-                        backgroundColor: selectedDirection.colors.primary,
-                      }}
-                    />
-                    <span
-                      className="text-sm font-semibold"
-                      style={{ fontFamily: selectedDirection.typography.heading }}
-                    >
-                      Your App
-                    </span>
+                  <div
+                    className="px-6 py-4 border-b"
+                    style={{ borderColor: selectedDirection.colors.secondary + "40" }}
+                  >
+                    <div className="flex items-center gap-2">
+                      <div
+                        className="h-5 w-5 rounded"
+                        style={{ backgroundColor: selectedDirection.colors.primary }}
+                      />
+                      <span className="text-sm font-semibold">
+                        {plan?.brief.split(/[.!]/)[0]?.slice(0, 28) || "Your App"}
+                      </span>
+                    </div>
                   </div>
-                </div>
-                <div className="px-6 py-10 text-center">
-                  <p
-                    className="text-xs uppercase tracking-widest mb-3 opacity-60"
-                    style={{ color: selectedDirection.colors.accent }}
-                  >
-                    {selectedDirection.mood}
-                  </p>
-                  <h2
-                    className="text-2xl font-bold mb-3 leading-tight"
-                    style={{ fontFamily: selectedDirection.typography.heading }}
-                  >
-                    From idea to live product
-                  </h2>
-                  <p
-                    className="text-sm opacity-70 mb-6 max-w-xs mx-auto"
-                    style={{ fontFamily: selectedDirection.typography.body }}
-                  >
-                    This is a lightweight preview of the selected design
-                    direction. Full interactive preview comes after approval.
-                  </p>
-                  <button
-                    className="inline-flex rounded-full px-5 py-2 text-sm font-semibold text-zinc-950"
-                    style={{
-                      backgroundColor: selectedDirection.colors.primary,
-                    }}
-                  >
-                    Get started
-                  </button>
-                </div>
-                <div
-                  className="px-6 py-4 flex gap-3 justify-center text-[10px] opacity-50"
-                  style={{
-                    borderTop: `1px solid ${selectedDirection.colors.secondary}40`,
-                  }}
-                >
-                  <span>Home</span>
-                  <span>Features</span>
-                  <span>Pricing</span>
+                  <div className="px-6 py-10 text-center">
+                    <p
+                      className="text-xs uppercase tracking-widest mb-3 opacity-60"
+                      style={{ color: selectedDirection.colors.accent }}
+                    >
+                      {selectedDirection.mood}
+                    </p>
+                    <h2 className="text-2xl font-bold mb-3 leading-tight">
+                      {(plan?.brief.slice(0, 60) || "From idea to live product") +
+                        ((plan?.brief.length || 0) > 60 ? "…" : "")}
+                    </h2>
+                    <p className="text-sm opacity-70 mb-6 max-w-sm mx-auto">
+                      {plan?.goals[0] || "Approve the plan to generate real Next.js files."}
+                    </p>
+                    <div
+                      className="inline-block rounded-full px-5 py-2 text-xs font-semibold text-zinc-950"
+                      style={{ backgroundColor: selectedDirection.colors.primary }}
+                    >
+                      Get started
+                    </div>
+                  </div>
+                  {plan && (
+                    <div className="px-6 pb-8 grid grid-cols-2 gap-2">
+                      {plan.features
+                        .filter((f) => f.priority === "mvp")
+                        .slice(0, 4)
+                        .map((f) => (
+                          <div
+                            key={f.name}
+                            className="rounded-xl border border-white/10 bg-white/5 p-3 text-left"
+                          >
+                            <p className="text-xs font-medium">{f.name}</p>
+                            <p className="text-[10px] opacity-50 mt-1 line-clamp-2">
+                              {f.description}
+                            </p>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : (
-              <div className="text-center max-w-sm">
-                <div className="h-16 w-16 rounded-2xl bg-zinc-800 border border-zinc-700 mx-auto mb-4 flex items-center justify-center text-2xl text-zinc-600">
-                  ◻
-                </div>
-                <p className="text-sm text-zinc-400">
-                  Design preview appears here once a plan is generated.
-                </p>
-                <p className="text-xs text-zinc-600 mt-2">
-                  Send a description in Chat to get started.
-                </p>
+              <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
+                Design preview appears after planning
               </div>
             )}
           </div>
