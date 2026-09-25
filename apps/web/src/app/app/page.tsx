@@ -8,6 +8,8 @@ import {
   type DesignDirection,
 } from "@/lib/planner";
 import { runBuild, type GeneratedFile } from "@/lib/coder";
+import { BuilderActions } from "@/components/BuilderActions";
+import { downloadZip } from "@/lib/zip";
 
 type Message = {
   id: string;
@@ -23,7 +25,7 @@ export default function BuilderPage() {
       id: "1",
       role: "assistant",
       content:
-        "Hi — I'm Vireo. Describe the website or app you want to build. You can also drop images, screenshots, or files. I'll create a clear plan and design directions before writing any code.",
+        "Hi — I'm Vireo. Describe the website or app you want to build. I'll create a clear plan and design directions before writing any code.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -48,12 +50,11 @@ export default function BuilderPage() {
         id: (Date.now() + 1).toString(),
         role: "assistant",
         content:
-          "Got it. I'm analyzing your request and preparing a structured plan + three design directions…",
+          "Got it. Preparing a structured plan + three design directions…",
       },
     ]);
     setInput("");
     setIsPlanning(true);
-
     try {
       const { plan: generated, provider, model, warning } =
         await generatePlan(prompt);
@@ -62,7 +63,7 @@ export default function BuilderPage() {
       setMode("plan");
       const providerNote =
         provider === "stub"
-          ? " (offline stub — add GEMINI_API_KEY and/or GROQ_API_KEY for real AI)"
+          ? " (offline stub — add OPENROUTER_API_KEY, GEMINI_API_KEY or GROQ_API_KEY)"
           : ` via ${provider}${model ? ` · ${model}` : ""}`;
       setMessages((m) => [
         ...m,
@@ -70,7 +71,7 @@ export default function BuilderPage() {
           id: (Date.now() + 2).toString(),
           role: "assistant",
           content:
-            `Plan is ready${providerNote}. Review the plan, pick a design direction, then approve to start building.` +
+            `Plan is ready${providerNote}. Review the plan, pick a design, then approve.` +
             (warning ? ` Note: ${warning}` : ""),
         },
       ]);
@@ -80,7 +81,7 @@ export default function BuilderPage() {
         {
           id: (Date.now() + 2).toString(),
           role: "assistant",
-          content: "Something went wrong generating the plan. Please try again.",
+          content: "Something went wrong. Please try again.",
         },
       ]);
     } finally {
@@ -97,10 +98,9 @@ export default function BuilderPage() {
       {
         id: Date.now().toString(),
         role: "assistant",
-        content: `Plan approved with design “${selectedDirection.name}”. Coder agent is writing your Next.js files…`,
+        content: `Plan approved (“${selectedDirection.name}”). Coder is writing files…`,
       },
     ]);
-
     try {
       const result = await runBuild(plan, selectedDirection);
       setFiles(result.files);
@@ -109,14 +109,14 @@ export default function BuilderPage() {
       setMode("files");
       const note =
         result.provider === "stub"
-          ? " (deterministic scaffold — works offline)"
+          ? " (offline scaffold)"
           : ` via ${result.provider}${result.model ? ` · ${result.model}` : ""}`;
       setMessages((m) => [
         ...m,
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: `Build complete${note}. ${result.files.length} files generated. Open the Files tab to browse the code.`,
+          content: `Build complete${note}. ${result.files.length} files ready. Download ZIP or browse Files.`,
         },
       ]);
     } catch {
@@ -125,7 +125,7 @@ export default function BuilderPage() {
         {
           id: (Date.now() + 1).toString(),
           role: "assistant",
-          content: "Build failed. Please try approving the plan again.",
+          content: "Build failed. Try approving again.",
         },
       ]);
     } finally {
@@ -167,9 +167,7 @@ export default function BuilderPage() {
               disabled={m === "files" && files.length === 0}
               className={`text-xs px-3 py-1 rounded-full capitalize disabled:opacity-30 ${
                 mode === m
-                  ? m === "plan" || m === "files"
-                    ? "bg-emerald-500/20 text-emerald-400"
-                    : "bg-zinc-800 text-zinc-100"
+                  ? "bg-emerald-500/20 text-emerald-400"
                   : "text-zinc-500 hover:text-zinc-300"
               }`}
             >
@@ -178,12 +176,10 @@ export default function BuilderPage() {
               {m === "files" && files.length > 0 ? ` (${files.length})` : ""}
             </button>
           ))}
-          <button
-            disabled={files.length === 0}
-            className="ml-2 text-xs px-3 py-1.5 rounded-full bg-emerald-500 text-zinc-950 font-medium hover:bg-emerald-400 transition disabled:opacity-40 disabled:cursor-not-allowed"
-          >
-            Publish
-          </button>
+          <BuilderActions
+            files={files}
+            projectName={plan?.brief.split(/[.!]/)[0]}
+          />
         </div>
       </header>
 
@@ -237,9 +233,6 @@ export default function BuilderPage() {
                     Send
                   </button>
                 </div>
-                <p className="text-[11px] text-zinc-600 mt-2 px-1">
-                  Plan is required before any code is written
-                </p>
               </div>
             </>
           )}
@@ -258,114 +251,59 @@ export default function BuilderPage() {
                 </div>
               ) : (
                 <div className="space-y-4 text-sm">
-                  <h2 className="text-sm font-semibold text-emerald-400">
-                    Project Plan
-                  </h2>
+                  <h2 className="text-sm font-semibold text-emerald-400">Project Plan</h2>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                    <h3 className="font-medium mb-1.5 text-xs uppercase tracking-wider text-zinc-500">
-                      Product Brief
-                    </h3>
-                    <p className="text-zinc-200 leading-relaxed">{plan.brief}</p>
+                    <h3 className="text-xs uppercase tracking-wider text-zinc-500 mb-1">Brief</h3>
+                    <p className="text-zinc-200">{plan.brief}</p>
                   </div>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                    <h3 className="font-medium mb-2 text-xs uppercase tracking-wider text-zinc-500">
-                      Goals
-                    </h3>
-                    <ul className="space-y-1.5">
-                      {plan.goals.map((g) => (
-                        <li key={g} className="flex gap-2 text-zinc-300 text-xs">
-                          <span className="text-emerald-500">•</span>
-                          {g}
-                        </li>
-                      ))}
-                    </ul>
+                    <h3 className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Pages</h3>
+                    {plan.pages.map((p) => (
+                      <div key={p.path} className="text-xs mb-2">
+                        <span className="font-medium text-zinc-200">{p.name}</span>
+                        <span className="text-zinc-600 ml-1">{p.path}</span>
+                        <p className="text-zinc-500">{p.description}</p>
+                      </div>
+                    ))}
                   </div>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                    <h3 className="font-medium mb-2 text-xs uppercase tracking-wider text-zinc-500">
-                      Pages
-                    </h3>
-                    <div className="space-y-2">
-                      {plan.pages.map((p) => (
-                        <div key={p.path} className="text-xs">
-                          <span className="font-medium text-zinc-200">{p.name}</span>
-                          <span className="text-zinc-600 ml-1.5">{p.path}</span>
-                          <p className="text-zinc-500 mt-0.5">{p.description}</p>
+                    <h3 className="text-xs uppercase tracking-wider text-zinc-500 mb-2">Features</h3>
+                    {plan.features.map((f) => (
+                      <div key={f.name} className="flex gap-2 text-xs mb-2">
+                        <span
+                          className={`text-[10px] uppercase px-1.5 py-0.5 rounded ${
+                            f.priority === "mvp"
+                              ? "bg-emerald-500/20 text-emerald-400"
+                              : "bg-zinc-800 text-zinc-500"
+                          }`}
+                        >
+                          {f.priority}
+                        </span>
+                        <div>
+                          <span className="font-medium text-zinc-200">{f.name}</span>
+                          <p className="text-zinc-500">{f.description}</p>
                         </div>
-                      ))}
-                    </div>
+                      </div>
+                    ))}
                   </div>
                   <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                    <h3 className="font-medium mb-2 text-xs uppercase tracking-wider text-zinc-500">
-                      Features
-                    </h3>
-                    <div className="space-y-2">
-                      {plan.features.map((f) => (
-                        <div key={f.name} className="flex items-start gap-2 text-xs">
-                          <span
-                            className={`shrink-0 text-[10px] uppercase px-1.5 py-0.5 rounded ${
-                              f.priority === "mvp"
-                                ? "bg-emerald-500/20 text-emerald-400"
-                                : "bg-zinc-800 text-zinc-500"
-                            }`}
-                          >
-                            {f.priority}
-                          </span>
-                          <div>
-                            <span className="font-medium text-zinc-200">{f.name}</span>
-                            <p className="text-zinc-500">{f.description}</p>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                    <h3 className="font-medium mb-2 text-xs uppercase tracking-wider text-zinc-500">
-                      Stack
-                    </h3>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                      <div>
-                        <span className="text-zinc-500">Frontend</span>
-                        <p className="text-zinc-300">{plan.stack.frontend}</p>
-                      </div>
-                      <div>
-                        <span className="text-zinc-500">Backend</span>
-                        <p className="text-zinc-300">{plan.stack.backend}</p>
-                      </div>
-                      <div>
-                        <span className="text-zinc-500">Database</span>
-                        <p className="text-zinc-300">{plan.stack.database}</p>
-                      </div>
-                      <div>
-                        <span className="text-zinc-500">Auth</span>
-                        <p className="text-zinc-300">{plan.stack.auth}</p>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-4">
-                    <h3 className="font-medium mb-3 text-xs uppercase tracking-wider text-zinc-500">
-                      Design Directions
-                    </h3>
+                    <h3 className="text-xs uppercase tracking-wider text-zinc-500 mb-3">Design</h3>
                     <div className="space-y-2">
                       {plan.designDirections.map((d) => (
                         <button
                           key={d.id}
                           onClick={() => setSelectedDirection(d)}
                           disabled={planApproved}
-                          className={`w-full text-left rounded-lg border p-3 transition disabled:opacity-70 ${
+                          className={`w-full text-left rounded-lg border p-3 ${
                             selectedDirection?.id === d.id
                               ? "border-emerald-500/50 bg-emerald-500/10"
-                              : "border-zinc-700 hover:border-zinc-600"
+                              : "border-zinc-700"
                           }`}
                         >
-                          <div className="flex items-center justify-between mb-1.5">
-                            <span className="font-medium text-sm">{d.name}</span>
-                            {selectedDirection?.id === d.id && (
-                              <span className="text-[10px] text-emerald-400">Selected</span>
-                            )}
-                          </div>
-                          <p className="text-[11px] text-zinc-500 mb-2">{d.mood}</p>
-                          <div className="flex gap-1.5">
-                            {[d.colors.primary, d.colors.accent, d.colors.secondary, d.colors.background].map(
+                          <span className="font-medium text-sm">{d.name}</span>
+                          <p className="text-[11px] text-zinc-500">{d.mood}</p>
+                          <div className="flex gap-1.5 mt-2">
+                            {[d.colors.primary, d.colors.accent, d.colors.secondary].map(
                               (c) => (
                                 <div
                                   key={c}
@@ -383,20 +321,17 @@ export default function BuilderPage() {
                     <button
                       onClick={approvePlan}
                       disabled={!selectedDirection || isBuilding}
-                      className="w-full rounded-xl bg-emerald-500 text-zinc-950 py-3 text-sm font-semibold hover:bg-emerald-400 transition disabled:opacity-40"
+                      className="w-full rounded-xl bg-emerald-500 text-zinc-950 py-3 text-sm font-semibold disabled:opacity-40"
                     >
                       {isBuilding ? "Building…" : "Approve Plan & Start Building"}
                     </button>
                   ) : (
-                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center">
-                      <p className="text-emerald-400 text-sm font-medium">Plan approved</p>
-                      <p className="text-xs text-zinc-400 mt-1">
-                        {isBuilding
-                          ? "Coder agent is writing files…"
-                          : files.length
-                            ? `${files.length} files ready · ${buildProvider || "stub"}`
-                            : `Building with “${selectedDirection?.name}”`}
-                      </p>
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-4 text-center text-sm text-emerald-400">
+                      {isBuilding
+                        ? "Writing files…"
+                        : files.length
+                          ? `${files.length} files · ${buildProvider || "stub"}`
+                          : "Approved"}
                     </div>
                   )}
                 </div>
@@ -406,34 +341,41 @@ export default function BuilderPage() {
 
           {mode === "files" && (
             <div className="flex-1 flex flex-col overflow-hidden">
-              <div className="p-3 border-b border-zinc-800">
+              <div className="p-3 border-b border-zinc-800 flex items-center justify-between">
                 <p className="text-xs text-zinc-500">
-                  Generated files{buildProvider ? ` · ${buildProvider}` : ""}
+                  Files{buildProvider ? ` · ${buildProvider}` : ""}
                 </p>
+                {files.length > 0 && (
+                  <button
+                    onClick={() =>
+                      downloadZip(
+                        plan?.brief.split(/[.!]/)[0]?.slice(0, 24) || "vireo-app",
+                        files.map((f) => ({ path: f.path, content: f.content }))
+                      )
+                    }
+                    className="text-[10px] px-2 py-1 rounded-md bg-zinc-800 text-emerald-400"
+                  >
+                    Download ZIP
+                  </button>
+                )}
               </div>
               <div className="flex-1 overflow-y-auto">
-                {files.length === 0 ? (
-                  <p className="text-sm text-zinc-500 p-4 text-center py-12">
-                    Approve a plan to generate files.
-                  </p>
-                ) : (
-                  <ul className="py-1">
-                    {files.map((f) => (
-                      <li key={f.path}>
-                        <button
-                          onClick={() => setActiveFile(f.path)}
-                          className={`w-full text-left px-4 py-2 text-xs font-mono truncate ${
-                            activeFile === f.path
-                              ? "bg-emerald-500/10 text-emerald-300"
-                              : "text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200"
-                          }`}
-                        >
-                          {f.path}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <ul className="py-1">
+                  {files.map((f) => (
+                    <li key={f.path}>
+                      <button
+                        onClick={() => setActiveFile(f.path)}
+                        className={`w-full text-left px-4 py-2 text-xs font-mono truncate ${
+                          activeFile === f.path
+                            ? "bg-emerald-500/10 text-emerald-300"
+                            : "text-zinc-400 hover:bg-zinc-900"
+                        }`}
+                      >
+                        {f.path}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               </div>
             </div>
           )}
@@ -447,43 +389,36 @@ export default function BuilderPage() {
               }`}
             />
             {mode === "files" && activeFile ? (
-              <span className="font-mono text-zinc-400 truncate">{activeFile}</span>
+              <span className="font-mono truncate">{activeFile}</span>
             ) : (
               <>
                 Preview
-                {selectedDirection && (
-                  <span className="text-zinc-400"> · {selectedDirection.name}</span>
-                )}
+                {selectedDirection && <span> · {selectedDirection.name}</span>}
               </>
             )}
           </div>
           <div className="flex-1 overflow-auto">
             {mode === "files" && activeFile ? (
-              <pre className="p-4 text-[11px] leading-relaxed font-mono text-zinc-300 whitespace-pre-wrap">
+              <pre className="p-4 text-[11px] font-mono text-zinc-300 whitespace-pre-wrap">
                 {activeContent}
               </pre>
             ) : selectedDirection ? (
               <div className="p-8 flex items-center justify-center min-h-full">
                 <div
-                  className="w-full max-w-lg rounded-2xl border border-zinc-700 overflow-hidden shadow-2xl"
+                  className="w-full max-w-lg rounded-2xl border border-zinc-700 overflow-hidden"
                   style={{
                     backgroundColor: selectedDirection.colors.background,
                     color: selectedDirection.colors.foreground,
                   }}
                 >
-                  <div
-                    className="px-6 py-4 border-b"
-                    style={{ borderColor: selectedDirection.colors.secondary + "40" }}
-                  >
-                    <div className="flex items-center gap-2">
-                      <div
-                        className="h-5 w-5 rounded"
-                        style={{ backgroundColor: selectedDirection.colors.primary }}
-                      />
-                      <span className="text-sm font-semibold">
-                        {plan?.brief.split(/[.!]/)[0]?.slice(0, 28) || "Your App"}
-                      </span>
-                    </div>
+                  <div className="px-6 py-4 border-b border-white/10 flex items-center gap-2">
+                    <div
+                      className="h-5 w-5 rounded"
+                      style={{ backgroundColor: selectedDirection.colors.primary }}
+                    />
+                    <span className="text-sm font-semibold">
+                      {plan?.brief.split(/[.!]/)[0]?.slice(0, 28) || "Your App"}
+                    </span>
                   </div>
                   <div className="px-6 py-10 text-center">
                     <p
@@ -492,13 +427,10 @@ export default function BuilderPage() {
                     >
                       {selectedDirection.mood}
                     </p>
-                    <h2 className="text-2xl font-bold mb-3 leading-tight">
+                    <h2 className="text-2xl font-bold mb-3">
                       {(plan?.brief.slice(0, 60) || "From idea to live product") +
                         ((plan?.brief.length || 0) > 60 ? "…" : "")}
                     </h2>
-                    <p className="text-sm opacity-70 mb-6 max-w-sm mx-auto">
-                      {plan?.goals[0] || "Approve the plan to generate real Next.js files."}
-                    </p>
                     <div
                       className="inline-block rounded-full px-5 py-2 text-xs font-semibold text-zinc-950"
                       style={{ backgroundColor: selectedDirection.colors.primary }}
@@ -506,29 +438,11 @@ export default function BuilderPage() {
                       Get started
                     </div>
                   </div>
-                  {plan && (
-                    <div className="px-6 pb-8 grid grid-cols-2 gap-2">
-                      {plan.features
-                        .filter((f) => f.priority === "mvp")
-                        .slice(0, 4)
-                        .map((f) => (
-                          <div
-                            key={f.name}
-                            className="rounded-xl border border-white/10 bg-white/5 p-3 text-left"
-                          >
-                            <p className="text-xs font-medium">{f.name}</p>
-                            <p className="text-[10px] opacity-50 mt-1 line-clamp-2">
-                              {f.description}
-                            </p>
-                          </div>
-                        ))}
-                    </div>
-                  )}
                 </div>
               </div>
             ) : (
               <div className="flex items-center justify-center h-full text-zinc-600 text-sm">
-                Design preview appears after planning
+                Preview appears after planning
               </div>
             )}
           </div>
