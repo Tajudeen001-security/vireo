@@ -109,7 +109,10 @@ export function buildZip(entries: ZipEntry[]): Blob {
   ]);
 
   const zip = concat([...localParts, centralDir, end]);
-  return new Blob([zip], { type: "application/zip" });
+  // Copy into a plain ArrayBuffer-backed Uint8Array for Blob compatibility (TS 5.x)
+  const bytes = new Uint8Array(zip.byteLength);
+  bytes.set(zip);
+  return new Blob([bytes], { type: "application/zip" });
 }
 
 export function downloadZip(filename: string, entries: ZipEntry[]) {

@@ -37,6 +37,13 @@ export type ProjectPlan = {
   designDirections: DesignDirection[];
 };
 
+export type PlanResult = {
+  plan: ProjectPlan;
+  provider: string;
+  model?: string;
+  warning?: string;
+};
+
 /** Offline stub — always works, no API key needed */
 export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan> {
   await new Promise((r) => setTimeout(r, 600));
@@ -125,9 +132,7 @@ export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan>
 }
 
 /** Calls the server API (uses free keys when available) */
-export async function generatePlan(
-  userPrompt: string
-): Promise<{ plan: ProjectPlan; provider: string; warning?: string }> {
+export async function generatePlan(userPrompt: string): Promise<PlanResult> {
   const res = await fetch("/api/plan", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -139,5 +144,6 @@ export async function generatePlan(
     return { plan, provider: "stub", warning: `API ${res.status}` };
   }
 
-  return res.json();
+  const data = (await res.json()) as PlanResult;
+  return data;
 }
