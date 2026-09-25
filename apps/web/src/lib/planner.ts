@@ -1,6 +1,7 @@
 /**
- * Client-side Planner stub (mirrors packages/ai).
- * Later this will call a server action that uses the real LLM + Zod schema.
+ * Planner client + types.
+ * Calls /api/plan which uses free providers (Groq / Gemini / OpenRouter)
+ * when keys are set, otherwise falls back to the offline stub.
  */
 
 export type DesignDirection = {
@@ -36,9 +37,9 @@ export type ProjectPlan = {
   designDirections: DesignDirection[];
 };
 
+/** Offline stub — always works, no API key needed */
 export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan> {
-  // Simulate network / agent thinking
-  await new Promise((r) => setTimeout(r, 900));
+  await new Promise((r) => setTimeout(r, 600));
 
   return {
     brief: `A modern web experience based on: "${userPrompt.slice(0, 120)}${userPrompt.length > 120 ? "…" : ""}"`,
@@ -121,4 +122,22 @@ export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan>
       },
     ],
   };
+}
+
+/** Calls the server API (uses free keys when available) */
+export async function generatePlan(
+  userPrompt: string
+): Promise<{ plan: ProjectPlan; provider: string; warning?: string }> {
+  const res = await fetch("/api/plan", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: userPrompt }),
+  });
+
+  if (!res.ok) {
+    const plan = await generatePlanStub(userPrompt);
+    return { plan, provider: "stub", warning: `API ${res.status}` };
+  }
+
+  return res.json();
 }
