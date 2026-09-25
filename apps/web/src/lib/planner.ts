@@ -1,7 +1,5 @@
 /**
  * Planner client + types.
- * Calls /api/plan which uses free providers (Groq / Gemini / OpenRouter)
- * when keys are set, otherwise falls back to the offline stub.
  */
 
 export type DesignDirection = {
@@ -44,10 +42,8 @@ export type PlanResult = {
   warning?: string;
 };
 
-/** Offline stub — always works, no API key needed */
 export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan> {
-  await new Promise((r) => setTimeout(r, 600));
-
+  await new Promise((r) => setTimeout(r, 400));
   return {
     brief: `A modern web experience based on: "${userPrompt.slice(0, 120)}${userPrompt.length > 120 ? "…" : ""}"`,
     goals: [
@@ -61,25 +57,11 @@ export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan>
       { name: "Pricing", path: "/pricing", description: "Plans and FAQ" },
     ],
     features: [
-      {
-        name: "Responsive marketing site",
-        priority: "mvp",
-        description: "Hero + sections that convert",
-      },
-      {
-        name: "Contact / waitlist form",
-        priority: "mvp",
-        description: "Collect emails or messages",
-      },
-      {
-        name: "User accounts",
-        priority: "later",
-        description: "Sign up / login when needed",
-      },
+      { name: "Responsive marketing site", priority: "mvp", description: "Hero + sections that convert" },
+      { name: "Contact / waitlist form", priority: "mvp", description: "Collect emails or messages" },
+      { name: "User accounts", priority: "later", description: "Sign up / login when needed" },
     ],
-    dataModel: [
-      { entity: "Lead", fields: ["id", "email", "name", "message", "createdAt"] },
-    ],
+    dataModel: [{ entity: "Lead", fields: ["id", "email", "name", "message", "createdAt"] }],
     stack: {
       frontend: "Next.js 15 + Tailwind + shadcn/ui",
       backend: "Supabase Edge Functions",
@@ -131,19 +113,30 @@ export async function generatePlanStub(userPrompt: string): Promise<ProjectPlan>
   };
 }
 
-/** Calls the server API (uses free keys when available) */
 export async function generatePlan(userPrompt: string): Promise<PlanResult> {
-  const res = await fetch("/api/plan", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: userPrompt }),
-  });
-
-  if (!res.ok) {
+  try {
+    const res = await fetch("/api/plan", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt: userPrompt }),
+    });
+    if (!res.ok) {
+      const plan = await generatePlanStub(userPrompt);
+      return { plan, provider: "stub", warning: `API ${res.status}` };
+    }
+    const data = (await res.json()) as PlanResult;
+    if (!data?.plan) {
+      const plan = await generatePlanStub(userPrompt);
+      return { plan, provider: "stub", warning: "Invalid plan response" };
+    }
+    return {
+      plan: data.plan,
+      provider: data.provider || "stub",
+      model: data.model,
+      warning: data.warning,
+    };
+  } catch {
     const plan = await generatePlanStub(userPrompt);
-    return { plan, provider: "stub", warning: `API ${res.status}` };
+    return { plan, provider: "stub", warning: "Network error" };
   }
-
-  const data = (await res.json()) as PlanResult;
-  return data;
 }

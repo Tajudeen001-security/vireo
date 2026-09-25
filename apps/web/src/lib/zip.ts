@@ -1,12 +1,11 @@
 /**
  * Minimal ZIP writer (store method, no compression) for browser downloads.
- * Enough to ship generated project source as a .zip without extra deps.
  */
 
-function crc32(buf: Uint8Array): number {
+function crc32(data: number[] | Uint8Array): number {
   let c = 0xffffffff;
-  for (let i = 0; i < buf.length; i++) {
-    c ^= buf[i];
+  for (let i = 0; i < data.length; i++) {
+    c ^= data[i];
     for (let k = 0; k < 8; k++) {
       c = c & 1 ? (0xedb88320 ^ (c >>> 1)) : c >>> 1;
     }
@@ -14,105 +13,89 @@ function crc32(buf: Uint8Array): number {
   return (c ^ 0xffffffff) >>> 0;
 }
 
-function u16(n: number): Uint8Array {
-  const b = new Uint8Array(2);
-  b[0] = n & 0xff;
-  b[1] = (n >>> 8) & 0xff;
-  return b;
+function writeU16(n: number): number[] {
+  return [n & 0xff, (n >>> 8) & 0xff];
 }
 
-function u32(n: number): Uint8Array {
-  const b = new Uint8Array(4);
-  b[0] = n & 0xff;
-  b[1] = (n >>> 8) & 0xff;
-  b[2] = (n >>> 16) & 0xff;
-  b[3] = (n >>> 24) & 0xff;
-  return b;
-}
-
-function concat(parts: Uint8Array[]): Uint8Array {
-  const len = parts.reduce((s, p) => s + p.length, 0);
-  const out = new Uint8Array(len);
-  let off = 0;
-  for (const p of parts) {
-    out.set(p, off);
-    off += p.length;
-  }
-  return out;
+function writeU32(n: number): number[] {
+  return [n & 0xff, (n >>> 8) & 0xff, (n >>> 16) & 0xff, (n >>> 24) & 0xff];
 }
 
 export type ZipEntry = { path: string; content: string };
 
+/** Build a ZIP as a plain number[] then copy into ArrayBuffer (TS-safe for Blob). */
 export function buildZip(entries: ZipEntry[]): Blob {
   const encoder = new TextEncoder();
-  const localParts: Uint8Array[] = [];
-  const centralParts: Uint8Array[] = [];
+  const localChunks: number[][] = [];
+  const centralChunks: number[][] = [];
   let offset = 0;
 
   for (const entry of entries) {
     const name = entry.path.replace(/^\/+/, "");
-    const nameBytes = encoder.encode(name);
-    const data = encoder.encode(entry.content);
-    const crc = crc32(data);
+    const nameBytes = Array.from(encoder.encode(name));
+    const dataBytes = Array.from(encoder.encode(entry.content));
+    const crc = crc32(dataBytes);
+    const size = dataBytes.length;
 
-    const localHeader = concat([
-      u32(0x04034b50),
-      u16(20),
-      u16(0),
-      u16(0),
-      u16(0),
-      u16(0),
-      u32(crc),
-      u32(data.length),
-      u32(data.length),
-      u16(nameBytes.length),
-      u16(0),
-      nameBytes,
-    ]);
+    const localHeader = [
+      ...writeU32(0x04034b50),
+      ...writeU16(20),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU32(crc),
+      ...writeU32(size),
+      ...writeU32(size),
+      ...writeU16(nameBytes.length),
+      ...writeU16(0),
+      ...nameBytes,
+    ];
 
-    localParts.push(localHeader, data);
+    localChunks.push(localHeader, dataBytes);
 
-    const central = concat([
-      u32(0x02014b50),
-      u16(20),
-      u16(20),
-      u16(0),
-      u16(0),
-      u16(0),
-      u16(0),
-      u32(crc),
-      u32(data.length),
-      u32(data.length),
-      u16(nameBytes.length),
-      u16(0),
-      u16(0),
-      u16(0),
-      u16(0),
-      u32(0),
-      u32(offset),
-      nameBytes,
-    ]);
-    centralParts.push(central);
-    offset += localHeader.length + data.length;
+    const central = [
+      ...writeU32(0x02014b50),
+      ...writeU16(20),
+      ...writeU16(20),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU32(crc),
+      ...writeU32(size),
+      ...writeU32(size),
+      ...writeU16(nameBytes.length),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU16(0),
+      ...writeU32(0),
+      ...writeU32(offset),
+      ...nameBytes,
+    ];
+    centralChunks.push(central);
+    offset += localHeader.length + dataBytes.length;
   }
 
-  const centralDir = concat(centralParts);
-  const end = concat([
-    u32(0x06054b50),
-    u16(0),
-    u16(0),
-    u16(entries.length),
-    u16(entries.length),
-    u32(centralDir.length),
-    u32(offset),
-    u16(0),
-  ]);
+  const centralDir = centralChunks.flat();
+  const end = [
+    ...writeU32(0x06054b50),
+    ...writeU16(0),
+    ...writeU16(0),
+    ...writeU16(entries.length),
+    ...writeU16(entries.length),
+    ...writeU32(centralDir.length),
+    ...writeU32(offset),
+    ...writeU16(0),
+  ];
 
-  const zip = concat([...localParts, centralDir, end]);
-  // Copy into a plain ArrayBuffer-backed Uint8Array for Blob compatibility (TS 5.x)
-  const bytes = new Uint8Array(zip.byteLength);
-  bytes.set(zip);
-  return new Blob([bytes], { type: "application/zip" });
+  const all = [...localChunks.flat(), ...centralDir, ...end];
+  const ab = new ArrayBuffer(all.length);
+  const view = new Uint8Array(ab);
+  for (let i = 0; i < all.length; i++) view[i] = all[i];
+
+  return new Blob([ab], { type: "application/zip" });
 }
 
 export function downloadZip(filename: string, entries: ZipEntry[]) {
